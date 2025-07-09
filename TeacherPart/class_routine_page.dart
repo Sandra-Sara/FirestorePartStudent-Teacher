@@ -1,200 +1,116 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
+import 'login.dart';
 
 class ClassRoutinePage extends StatefulWidget {
   const ClassRoutinePage({super.key});
 
   @override
-  State<ClassRoutinePage> createState() => _ClassRoutinePageState();
+  _ClassRoutinePageState createState() => _ClassRoutinePageState();
 }
 
 class _ClassRoutinePageState extends State<ClassRoutinePage> {
-  List<Map<String, String>> routines = [];
-  final TextEditingController searchController = TextEditingController();
+  String? _userId;
+  bool _isLoading = true;
+  String? _errorMessage;
+  List<Map<String, dynamic>> _routineRecords = [];
 
   @override
   void initState() {
     super.initState();
-    _loadRoutines();
+    _initializeUser();
   }
 
-  Future<void> _loadRoutines() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final userId = user?.uid ?? user?.email ?? 'unknown';
+  String _hashEmail(String email) {
+    final bytes = utf8.encode(email.toLowerCase());
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
+  Future<void> _initializeUser() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
     try {
-      // Load from Firestore
-      final snapshot = await FirebaseFirestore.instance
-          .collection('class_routines')
-          .doc(userId)
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      final role = prefs.getString('user_role');
+
+      if (token == null || role != 'teacher') {
+        setState(() {
+          _errorMessage = 'Invalid session or not a teacher. Please log in again.';
+          _isLoading = false;
+        });
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const LoginPage()),
+        );
+        return;
+      }
+
+      setState(() {
+        _userId = token.replaceFirst('mock_token_', '');
+      });
+
+      await _fetchRoutine();
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error initializing: $e';
+        _isLoading = false;
+      });
+      if (kDebugMode) {
+        print('Initialization error: $e');
+      }
+    }
+  }
+
+  Future<void> _fetchRoutine() async {
+    try {
+      final querySnapshot = await FirebaseFirestore.instance
           .collection('routines')
+          .where('teacherId', isEqualTo: _userId)
+          .orderBy('timestamp', descending: true)
           .get();
 
-      if (snapshot.docs.isNotEmpty) {
-        setState(() {
-          routines = snapshot.docs.map((doc) {
-            return {
-              'id': doc.id,
-              'subject': doc.data()['subject'] as String,
-              'day': doc.data()['day'] as String,
-              'time': doc.data()['time'] as String,
-              'date': doc.data()['date'] as String,
-            };
-          }).toList();
-        });
-        // Cache to SharedPreferences
-        await _saveRoutinesToPrefs();
-      } else {
-        // Fallback to SharedPreferences or default data
-        final prefs = await SharedPreferences.getInstance();
-        final routineData = prefs.getStringList('routines') ?? [];
-        setState(() {
-          routines = routineData.map((data) {
-            final parts = data.split(':');
-            return {
-              'id': null,
-              'subject': parts[0],
-              'day': parts[1],
-              'time': parts[2],
-              'date': parts[3],
-            };
-          }).toList();
-          if (routines.isEmpty) {
-            routines = [
-              {'id': null, 'subject': 'CSE 2201', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-02'},
-              {'id': null, 'subject': 'CSE 2105', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-03'},
-              {'id': null, 'subject': 'CSE 2203', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-04'},
-              {'id': null, 'subject': 'CSE 3104', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-05'},
-              {'id': null, 'subject': 'CSE 4205', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-06'},
-              {'id': null, 'subject': 'CSE 2203', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-09'},
-              {'id': null, 'subject': 'CSE 2201', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-10'},
-              {'id': null, 'subject': 'CSE 3104', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-11'},
-              {'id': null, 'subject': 'CSE 2105', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-12'},
-              {'id': null, 'subject': 'CSE 4205', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-13'},
-              {'id': null, 'subject': 'CSE 2105', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-16'},
-              {'id': null, 'subject': 'CSE 4205', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-17'},
-              {'id': null, 'subject': 'CSE 2203', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-18'},
-              {'id': null, 'subject': 'CSE 3104', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-19'},
-              {'id': null, 'subject': 'CSE 2201', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-20'},
-              {'id': null, 'subject': 'CSE 3104', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-23'},
-              {'id': null, 'subject': 'CSE 4205', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-24'},
-              {'id': null, 'subject': 'CSE 2203', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-25'},
-              {'id': null, 'subject': 'CSE 2201', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-26'},
-              {'id': null, 'subject': 'CSE 2105', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-27'},
-              {'id': null, 'subject': 'CSE 2201', 'day': 'Monday', 'time': '9:00 AM - 11:00 PM', 'date': '2025-06-30'},
-            ];
-            _saveRoutines();
-          }
-        });
-      }
-
-      // Log routine access
-      await FirebaseFirestore.instance.collection('routine_logs').add({
-        'email': user?.email ?? 'unknown',
-        'action': 'load_routines',
-        'timestamp': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      print('Error loading routines from Firestore: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading routines: $e')),
-      );
-      // Fallback to SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      final routineData = prefs.getStringList('routines') ?? [];
       setState(() {
-        routines = routineData.map((data) {
-          final parts = data.split(':');
+        _routineRecords = querySnapshot.docs.map((doc) {
+          final data = doc.data();
           return {
-            'id': null,
-            'subject': parts[0],
-            'day': parts[1],
-            'time': parts[2],
-            'date': parts[3],
+            'courseId': data['courseId'] ?? 'N/A',
+            'day': data['day'] ?? 'N/A',
+            'time': data['time'] ?? 'N/A',
+            'room': data['room'] ?? 'N/A',
+            'semester': data['semester'] ?? 'N/A',
           };
         }).toList();
-        if (routines.isEmpty) {
-          routines = [
-            {'id': null, 'subject': 'CSE 2201', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-02'},
-            {'id': null, 'subject': 'CSE 2105', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-03'},
-            {'id': null, 'subject': 'CSE 2203', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-04'},
-            {'id': null, 'subject': 'CSE 3104', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-05'},
-            {'id': null, 'subject': 'CSE 4205', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-06'},
-            {'id': null, 'subject': 'CSE 2203', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-09'},
-            {'id': null, 'subject': 'CSE 2201', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-10'},
-            {'id': null, 'subject': 'CSE 3104', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-11'},
-            {'id': null, 'subject': 'CSE 2105', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-12'},
-            {'id': null, 'subject': 'CSE 4205', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-13'},
-            {'id': null, 'subject': 'CSE 2105', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-16'},
-            {'id': null, 'subject': 'CSE 4205', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-17'},
-            {'id': null, 'subject': 'CSE 2203', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-18'},
-            {'id': null, 'subject': 'CSE 3104', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-19'},
-            {'id': null, 'subject': 'CSE 2201', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-20'},
-            {'id': null, 'subject': 'CSE 3104', 'day': 'Monday', 'time': '9:00 AM - 11:00 AM', 'date': '2025-06-23'},
-            {'id': null, 'subject': 'CSE 4205', 'day': 'Tuesday', 'time': '1:00 PM - 3:00 PM', 'date': '2025-06-24'},
-            {'id': null, 'subject': 'CSE 2203', 'day': 'Wednesday', 'time': '10:00 AM - 12:00 PM', 'date': '2025-06-25'},
-            {'id': null, 'subject': 'CSE 2201', 'day': 'Thursday', 'time': '2:00 PM - 4:00 PM', 'date': '2025-06-26'},
-            {'id': null, 'subject': 'CSE 2105', 'day': 'Sunday', 'time': '11:00 AM - 1:00 PM', 'date': '2025-06-27'},
-            {'id': null, 'subject': 'CSE 2201', 'day': 'Monday', 'time': '9:00 AM - 11:00 PM', 'date': '2025-06-30'},
-          ];
-          _saveRoutines();
-        }
       });
-    }
-  }
-
-  Future<void> _saveRoutines() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final userId = user?.uid ?? user?.email ?? 'unknown';
-    try {
-      // Save to Firestore
-      final batch = FirebaseFirestore.instance.batch();
-      final routinesCollection = FirebaseFirestore.instance
-          .collection('class_routines')
-          .doc(userId)
-          .collection('routines');
-      for (var routine in routines) {
-        final docId = routine['id'] ?? DateTime.now().millisecondsSinceEpoch.toString();
-        batch.set(routinesCollection.doc(docId), {
-          'subject': routine['subject'],
-          'day': routine['day'],
-          'time': routine['time'],
-          'date': routine['date'],
-        });
-      }
-      await batch.commit();
-
-      // Cache to SharedPreferences
-      await _saveRoutinesToPrefs();
     } catch (e) {
-      print('Error saving routines to Firestore: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving routines: $e')),
-      );
+      setState(() {
+        _errorMessage = 'Error fetching class routine: $e';
+      });
+      if (kDebugMode) {
+        print('Fetch routine error: $e');
+      }
     }
   }
 
-  Future<void> _saveRoutinesToPrefs() async {
+  Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
-    final routineData = routines.map((routine) => '${routine['subject']}:${routine['day']}:${routine['time']}:${routine['date']}').toList();
-    await prefs.setStringList('routines', routineData);
-  }
-
-  List<Map<String, String>> get filteredRoutines {
-    String query = searchController.text.trim().toLowerCase();
-    if (RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(query)) {
-      return routines.where((routine) => routine['date'] == query).toList();
-    } else {
-      return routines.where((routine) => routine['subject']!.toLowerCase().contains(query)).toList();
-    }
-  }
-
-  @override
-  void dispose() {
-    searchController.dispose();
-    super.dispose();
+    await prefs.clear();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginPage()),
+    );
   }
 
   @override
@@ -205,125 +121,164 @@ class _ClassRoutinePageState extends State<ClassRoutinePage> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.blue, Colors.deepPurple],
+            colors: [Colors.blue, Colors.blueAccent],
           ),
         ),
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Image.asset(
-                    'assets/dulogo.png',
-                    height: 150,
-                    width: 300,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) => const Icon(Icons.error, size: 100, color: Colors.white70),
-                  ).animate().fadeIn(duration: 800.ms),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'University Of Dhaka',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Class Routine',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 30),
-                  Card(
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          TextField(
-                            controller: searchController,
-                            decoration: const InputDecoration(
-                              labelText: 'Search by Subject or Date (YYYY-MM-DD)',
-                              border: OutlineInputBorder(),
-                              labelStyle: TextStyle(color: Colors.black87),
-                            ),
-                            style: const TextStyle(color: Colors.black87),
-                            onChanged: (value) => setState(() {}),
-                          ),
-                          const SizedBox(height: 20),
-                          if (searchController.text.isNotEmpty)
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(searchController.text.trim())
-                                      ? 'Subjects on ${searchController.text}:'
-                                      : 'Schedule for ${searchController.text}:',
-                                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator(color: Colors.white))
+                : _errorMessage != null
+                    ? Center(
+                        child: Text(
+                          _errorMessage!,
+                          style: const TextStyle(color: Colors.red, fontSize: 16),
+                          textAlign: TextAlign.center,
+                        ),
+                      )
+                    : SingleChildScrollView(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Class Routine',
+                              style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.white,
+                              ),
+                            ).animate().fadeIn(duration: 800.ms),
+                            const SizedBox(height: 20),
+                            if (_routineRecords.isEmpty)
+                              const Text(
+                                'No class routine found.',
+                                style: TextStyle(fontSize: 16, color: Colors.white70),
+                              ).animate().fadeIn(duration: 600.ms)
+                            else
+                              Card(
+                                elevation: 8,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
-                                const SizedBox(height: 5),
-                                if (filteredRoutines.isEmpty)
-                                  const Text(
-                                    'No class found',
-                                    style: TextStyle(fontSize: 16, color: Colors.red),
-                                  )
-                                else
-                                  ...filteredRoutines.map((routine) => Padding(
-                                        padding: const EdgeInsets.symmetric(vertical: 4.0),
-                                        child: Text(
-                                          RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(searchController.text.trim())
-                                              ? '${routine['subject']} at ${routine['time']}'
-                                              : '${routine['subject']} on ${routine['day']} (${routine['date']}) at ${routine['time']}',
-                                          style: const TextStyle(fontSize: 16),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Column(
+                                    children: [
+                                      const Text(
+                                        'Your Class Schedule',
+                                        style: TextStyle(
+                                          fontSize: 18,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black87,
                                         ),
-                                      )),
-                              ],
-                            ),
-                          const SizedBox(height: 20),
-                          ListView.builder(
-                            shrinkWrap: true,
-                            physics: const NeverScrollableScrollPhysics(),
-                            itemCount: filteredRoutines.length,
-                            itemBuilder: (context, index) {
-                              final routine = filteredRoutines[index];
-                              return ListTile(
-                                title: Text('${routine['subject']} (${routine['time']})'),
-                                subtitle: Text('${routine['day']} - ${routine['date']}'),
-                              );
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
-                  ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.5, end: 0),
-                  const SizedBox(height: 20),
-                  Center(
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        minimumSize: const Size(200, 50),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      const SizedBox(height: 10),
+                                      Table(
+                                        border: TableBorder.all(color: Colors.grey),
+                                        columnWidths: const {
+                                          0: FlexColumnWidth(2),
+                                          1: FlexColumnWidth(1.5),
+                                          2: FlexColumnWidth(2),
+                                          3: FlexColumnWidth(1.5),
+                                          4: FlexColumnWidth(2),
+                                        },
+                                        children: [
+                                          TableRow(
+                                            decoration: BoxDecoration(color: Colors.blue.shade100),
+                                            children: const [
+                                              Padding(
+                                                padding: EdgeInsets.all(8.0),
+                                                child: Text(
+                                                  'Course',
+                                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                              Padding(
+                                                padding: EdgeInsets.all(8.0),
+                                                child: Text(
+                                                  'Day',
+                                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                              Padding(
+                                                padding: EdgeInsets.all(8.0),
+                                                child: Text(
+                                                  'Time',
+                                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                              Padding(
+                                                padding: EdgeInsets.all(8.0),
+                                                child: Text(
+                                                  'Room',
+                                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                              Padding(
+                                                padding: EdgeInsets.all(8.0),
+                                                child: Text(
+                                                  'Semester',
+                                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          ..._routineRecords.map((record) {
+                                            return TableRow(
+                                              children: [
+                                                Padding(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  child: Text(record['courseId']),
+                                                ),
+                                                Padding(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  child: Text(record['day']),
+                                                ),
+                                                Padding(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  child: Text(record['time']),
+                                                ),
+                                                Padding(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  child: Text(record['room']),
+                                                ),
+                                                Padding(
+                                                  padding: const EdgeInsets.all(8.0),
+                                                  child: Text(record['semester']),
+                                                ),
+                                              ],
+                                            );
+                                          }),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.3, end: 0),
+                            const SizedBox(height: 20),
+                            ElevatedButton(
+                              onPressed: _logout,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                minimumSize: const Size(double.infinity, 50),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                elevation: 5,
+                              ),
+                              child: const Text(
+                                'Logout',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ).animate().fadeIn(duration: 800.ms),
+                          ],
                         ),
-                        elevation: 5,
                       ),
-                      child: const Text(
-                        'Back',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
           ),
         ),
       ),
