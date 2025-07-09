@@ -1,344 +1,343 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
+import 'login.dart';
 
 class TeacherProfilePage extends StatefulWidget {
   const TeacherProfilePage({super.key});
 
   @override
-  State<TeacherProfilePage> createState() => _TeacherProfilePageState();
+  _TeacherProfilePageState createState() => _TeacherProfilePageState();
 }
 
 class _TeacherProfilePageState extends State<TeacherProfilePage> {
+  final _formKey = GlobalKey<FormState>();
+  String? _name;
+  String? _email;
+  String? _teacherId;
+  String? _department;
+  bool _isLoading = true;
   bool _isEditing = false;
-  Map<String, String> _profileData = {
-    'Name': 'Unknown',
-    'Teacher ID': 'T12345',
-    'Department': 'Enter your department',
-    'Email': 'your.email@example.com',
-    'Phone': 'Your phone number',
-  };
-  late Map<String, TextEditingController> _controllers;
+  String? _errorMessage;
+  final _nameController = TextEditingController();
+  final _teacherIdController = TextEditingController();
+  final _departmentController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _controllers = {
-      'Name': TextEditingController(text: _profileData['Name']),
-      'Teacher ID': TextEditingController(text: _profileData['Teacher ID']),
-      'Department': TextEditingController(text: _profileData['Department']),
-      'Email': TextEditingController(text: _profileData['Email']),
-      'Phone': TextEditingController(text: _profileData['Phone']),
-    };
-    _loadProfile();
-  }
-
-  Future<void> _loadProfile() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final userId = user?.uid ?? user?.email ?? 'unknown';
-    try {
-      // Try to load from Firestore
-      final doc = await FirebaseFirestore.instance
-          .collection('teacher_profiles')
-          .doc(userId)
-          .get();
-      if (doc.exists) {
-        setState(() {
-          _profileData = {
-            'Name': doc.data()!['Name'] ?? _profileData['Name']!,
-            'Teacher ID': doc.data()!['Teacher ID'] ?? _profileData['Teacher ID']!,
-            'Department': doc.data()!['Department'] ?? _profileData['Department']!,
-            'Email': doc.data()!['Email'] ?? _profileData['Email']!,
-            'Phone': doc.data()!['Phone'] ?? _profileData['Phone']!,
-          };
-          _controllers.forEach((key, controller) {
-            controller.text = _profileData[key]!;
-          });
-        });
-      } else {
-        // Fallback to SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        setState(() {
-          _profileData = {
-            'Name': prefs.getString('profile_name') ?? _profileData['Name']!,
-            'Teacher ID': prefs.getString('profile_teacherId') ?? _profileData['Teacher ID']!,
-            'Department': prefs.getString('profile_dept') ?? _profileData['Department']!,
-            'Email': prefs.getString('profile_email') ?? _profileData['Email']!,
-            'Phone': prefs.getString('profile_phone') ?? _profileData['Phone']!,
-          };
-          _controllers.forEach((key, controller) {
-            controller.text = _profileData[key]!;
-          });
-        });
-      }
-    } catch (e) {
-      print('Error loading profile from Firestore: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading profile: $e')),
-      );
-      // Fallback to SharedPreferences
-      final prefs = await SharedPreferences.getInstance();
-      setState(() {
-        _profileData = {
-          'Name': prefs.getString('profile_name') ?? _profileData['Name']!,
-          'Teacher ID': prefs.getString('profile_teacherId') ?? _profileData['Teacher ID']!,
-          'Department': prefs.getString('profile_dept') ?? _profileData['Department']!,
-          'Email': prefs.getString('profile_email') ?? _profileData['Email']!,
-          'Phone': prefs.getString('profile_phone') ?? _profileData['Phone']!,
-        };
-        _controllers.forEach((key, controller) {
-          controller.text = _profileData[key]!;
-        });
-      });
-    }
-  }
-
-  Future<void> _saveProfile() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final userId = user?.uid ?? user?.email ?? 'unknown';
-    try {
-      // Update local profile data
-      _controllers.forEach((key, controller) {
-        _profileData[key] = controller.text.isNotEmpty ? controller.text : _profileData[key]!;
-      });
-
-      // Save to Firestore
-      await FirebaseFirestore.instance
-          .collection('teacher_profiles')
-          .doc(userId)
-          .set(_profileData);
-
-      // Log profile update to Firestore
-      await FirebaseFirestore.instance.collection('profile_update_logs').add({
-        'email': user?.email ?? 'unknown',
-        'timestamp': FieldValue.serverTimestamp(),
-        'updated_fields': _profileData,
-      });
-
-      // Save to SharedPreferences as a local cache
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('profile_name', _controllers['Name']!.text);
-      await prefs.setString('profile_teacherId', _controllers['Teacher ID']!.text);
-      await prefs.setString('profile_dept', _controllers['Department']!.text);
-      await prefs.setString('profile_email', _controllers['Email']!.text);
-      await prefs.setString('profile_phone', _controllers['Phone']!.text);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile saved successfully')),
-      );
-    } catch (e) {
-      print('Error saving profile to Firestore: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving profile: $e')),
-      );
-    }
+    _fetchTeacherProfile();
   }
 
   @override
   void dispose() {
-    _controllers.forEach((key, controller) => controller.dispose());
+    _nameController.dispose();
+    _teacherIdController.dispose();
+    _departmentController.dispose();
     super.dispose();
   }
 
-  void _toggleEdit() {
+  String _hashEmail(String email) {
+    final bytes = utf8.encode(email.toLowerCase());
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
+  Future<void> _fetchTeacherProfile() async {
     setState(() {
-      if (_isEditing) {
-        _saveProfile();
-      }
-      _isEditing = !_isEditing;
+      _isLoading = true;
+      _errorMessage = null;
     });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('token');
+      final role = prefs.getString('user_role');
+
+      if (token == null || role != 'teacher') {
+        setState(() {
+          _errorMessage = 'Invalid session. Please log in again.';
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final userId = token.replaceFirst('mock_token_', '');
+      final userDoc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
+
+      if (userDoc.exists && userDoc.data()!['role'] == 'teacher') {
+        final userData = userDoc.data()!;
+        setState(() {
+          _name = userData['name'];
+          _email = userData['email'];
+          _teacherId = userData['teacherId'];
+          _department = userData['department'];
+          _nameController.text = _name ?? '';
+          _teacherIdController.text = _teacherId ?? '';
+          _departmentController.text = _department ?? '';
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _errorMessage = 'Teacher profile not found or invalid role.';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error fetching profile: $e';
+        _isLoading = false;
+      });
+      if (kDebugMode) {
+        print('Profile fetch error: $e');
+      }
+    }
+  }
+
+  Future<void> _updateProfile() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() {
+        _isLoading = true;
+        _errorMessage = null;
+      });
+
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final token = prefs.getString('token');
+        final userId = token!.replaceFirst('mock_token_', '');
+
+        await FirebaseFirestore.instance.collection('users').doc(userId).update({
+          'name': _nameController.text.trim(),
+          'teacherId': _teacherIdController.text.trim(),
+          'department': _departmentController.text.trim(),
+        });
+
+        setState(() {
+          _name = _nameController.text.trim();
+          _teacherId = _teacherIdController.text.trim();
+          _department = _departmentController.text.trim();
+          _isEditing = false;
+          _isLoading = false;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Profile updated successfully')),
+        );
+      } catch (e) {
+        setState(() {
+          _errorMessage = 'Error updating profile: $e';
+          _isLoading = false;
+        });
+        if (kDebugMode) {
+          print('Profile update error: $e');
+        }
+      }
+    }
+  }
+
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginPage()),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.blue, Colors.deepPurple],
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ClipOval(
-                    child: Image.asset(
-                      'assets/profile.png',
-                      height: 150,
-                      width: 150,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Container(
-                          height: 150,
-                          width: 150,
-                          color: Colors.grey,
-                          child: const Icon(Icons.person, size: 50, color: Colors.white),
-                        );
-                      },
-                    ),
-                  ).animate().fadeIn(duration: 800.ms),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'University Of Dhaka',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
-                  ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Teacher Profile',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 30),
-                  Card(
-                    elevation: 4,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          ProfileInfoRow(
-                            label: 'Name',
-                            value: _profileData['Name']!,
-                            isEditing: _isEditing,
-                            controller: _controllers['Name']!,
-                          ),
-                          ProfileInfoRow(
-                            label: 'Teacher ID',
-                            value: _profileData['Teacher ID']!,
-                            isEditing: _isEditing,
-                            controller: _controllers['Teacher ID']!,
-                          ),
-                          ProfileInfoRow(
-                            label: 'Department',
-                            value: _profileData['Department']!,
-                            isEditing: _isEditing,
-                            controller: _controllers['Department']!,
-                          ),
-                          ProfileInfoRow(
-                            label: 'Email',
-                            value: _profileData['Email']!,
-                            isEditing: _isEditing,
-                            controller: _controllers['Email']!,
-                          ),
-                          ProfileInfoRow(
-                            label: 'Phone',
-                            value: _profileData['Phone']!,
-                            isEditing: _isEditing,
-                            controller: _controllers['Phone']!,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.5, end: 0),
-                  const SizedBox(height: 20),
-                  Center(
-                    child: ElevatedButton(
-                      onPressed: _toggleEdit,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        minimumSize: const Size(200, 50),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 5,
-                      ),
-                      child: Text(
-                        _isEditing ? 'Save' : 'Edit',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Center(
-                    child: ElevatedButton(
-                      onPressed: () => Navigator.pop(context),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.blue,
-                        minimumSize: const Size(200, 50),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        elevation: 5,
-                      ),
-                      child: const Text(
-                        'Back',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
+      appBar: AppBar(
+        title: const Text('Teacher Profile'),
+        backgroundColor: Colors.blue,
       ),
-    );
-  }
-}
-
-class ProfileInfoRow extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool isEditing;
-  final TextEditingController controller;
-
-  const ProfileInfoRow({
-    super.key,
-    required this.label,
-    required this.value,
-    required this.isEditing,
-    required this.controller,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '$label: ',
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Colors.blue,
-            ),
-          ),
-          Expanded(
-            child: isEditing
-                ? TextField(
-                    controller: controller,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+      body: Center(
+        child: _isLoading
+            ? const CircularProgressIndicator(color: Colors.blue)
+            : _errorMessage != null
+                ? Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      _errorMessage!,
+                      style: const TextStyle(color: Colors.red, fontSize: 16),
+                      textAlign: TextAlign.center,
                     ),
-                    style: const TextStyle(fontSize: 16, color: Colors.black87),
                   )
-                : Text(
-                    value,
-                    style: const TextStyle(fontSize: 16, color: Colors.black87),
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Card(
+                      elevation: 8,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(24.0),
+                        child: Form(
+                          key: _formKey,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Teacher Profile',
+                                style: TextStyle(
+                                  fontSize: 24,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                              _isEditing
+                                  ? TextFormField(
+                                      controller: _nameController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Full Name',
+                                        border: OutlineInputBorder(),
+                                        prefixIcon: Icon(Icons.person),
+                                      ),
+                                      validator: (value) {
+                                        if (value == null || value.trim().isEmpty) {
+                                          return 'Please enter your full name';
+                                        }
+                                        return null;
+                                      },
+                                    )
+                                  : Text(
+                                      'Name: ${_name ?? 'N/A'}',
+                                      style: const TextStyle(fontSize: 18),
+                                    ),
+                              const SizedBox(height: 10),
+                              Text(
+                                'Email: ${_email ?? 'N/A'}',
+                                style: const TextStyle(fontSize: 18),
+                              ),
+                              const SizedBox(height: 10),
+                              _isEditing
+                                  ? TextFormField(
+                                      controller: _teacherIdController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Teacher ID',
+                                        border: OutlineInputBorder(),
+                                        prefixIcon: Icon(Icons.badge),
+                                      ),
+                                      validator: (value) {
+                                        if (value == null || value.trim().isEmpty) {
+                                          return 'Please enter your teacher ID';
+                                        }
+                                        return null;
+                                      },
+                                    )
+                                  : Text(
+                                      'Teacher ID: ${_teacherId ?? 'N/A'}',
+                                      style: const TextStyle(fontSize: 18),
+                                    ),
+                              const SizedBox(height: 10),
+                              _isEditing
+                                  ? TextFormField(
+                                      controller: _departmentController,
+                                      decoration: const InputDecoration(
+                                        labelText: 'Department',
+                                        border: OutlineInputBorder(),
+                                        prefixIcon: Icon(Icons.school),
+                                      ),
+                                      validator: (value) {
+                                        if (value == null || value.trim().isEmpty) {
+                                          return 'Please enter your department';
+                                        }
+                                        return null;
+                                      },
+                                    )
+                                  : Text(
+                                      'Department: ${_department ?? 'N/A'}',
+                                      style: const TextStyle(fontSize: 18),
+                                    ),
+                              const SizedBox(height: 20),
+                              if (_isEditing)
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    ElevatedButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          _isEditing = false;
+                                          _nameController.text = _name ?? '';
+                                          _teacherIdController.text = _teacherId ?? '';
+                                          _departmentController.text = _department ?? '';
+                                        });
+                                      },
+                                      style: ElevatedButton.styleFrom(
+                                        minimumSize: const Size(150, 50),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        backgroundColor: Colors.grey,
+                                      ),
+                                      child: const Text(
+                                        'Cancel',
+                                        style: TextStyle(color: Colors.white),
+                                      ),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed: _isLoading ? null : _updateProfile,
+                                      style: ElevatedButton.styleFrom(
+                                        minimumSize: const Size(150, 50),
+                                        shape: RoundedRectangleBorder(
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        backgroundColor: Colors.blue,
+                                      ),
+                                      child: _isLoading
+                                          ? const CircularProgressIndicator(color: Colors.white)
+                                          : const Text(
+                                              'Save',
+                                              style: TextStyle(color: Colors.white),
+                                            ),
+                                    ),
+                                  ],
+                                )
+                              else
+                                ElevatedButton(
+                                  onPressed: () {
+                                    setState(() {
+                                      _isEditing = true;
+                                    });
+                                  },
+                                  style: ElevatedButton.styleFrom(
+                                    minimumSize: const Size(double.infinity, 50),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    backgroundColor: Colors.blue,
+                                  ),
+                                  child: const Text(
+                                    'Edit Profile',
+                                    style: TextStyle(color: Colors.white),
+                                  ),
+                                ),
+                              const SizedBox(height: 16),
+                              ElevatedButton(
+                                onPressed: _logout,
+                                style: ElevatedButton.styleFrom(
+                                  minimumSize: const Size(double.infinity, 50),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  backgroundColor: Colors.blue,
+                                ),
+                                child: const Text(
+                                  'Logout',
+                                  style: TextStyle(color: Colors.white),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
-          ),
-        ],
       ),
     );
   }
