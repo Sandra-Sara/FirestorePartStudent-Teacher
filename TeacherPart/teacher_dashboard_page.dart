@@ -5,6 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
 import 'login.dart';
+import 'teacher_profile_page.dart';
+import 'student_attendance_page.dart';
 
 class TeacherDashboardPage extends StatefulWidget {
   const TeacherDashboardPage({super.key});
@@ -52,7 +54,6 @@ class _TeacherDashboardPageState extends State<TeacherDashboardPage> {
         return;
       }
 
-      // Extract email from token (mock_token_$userId)
       final userId = token.replaceFirst('mock_token_', '');
       final userDoc = await FirebaseFirestore.instance.collection('users').doc(userId).get();
 
@@ -152,6 +153,46 @@ class _TeacherDashboardPageState extends State<TeacherDashboardPage> {
                               style: const TextStyle(fontSize: 18),
                             ),
                             const SizedBox(height: 20),
+                            ElevatedButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (context) => const TeacherProfilePage()),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: const Size(double.infinity, 50),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                backgroundColor: Colors.blue,
+                              ),
+                              child: const Text(
+                                'View Profile',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            ElevatedButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(builder: (context) => const StudentAttendancePage()),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                minimumSize: const Size(double.infinity, 50),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                backgroundColor: Colors.blue,
+                              ),
+                              child: const Text(
+                                'Mark Attendance',
+                                style: TextStyle(color: Colors.white),
+                              ),
+                            ),
+                            const SizedBox(height: 16),
                             ElevatedButton(
                               onPressed: _logout,
                               style: ElevatedButton.styleFrom(
