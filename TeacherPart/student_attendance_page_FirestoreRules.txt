@@ -7,7 +7,7 @@ service cloud.firestore {
     }
     match /attendance/{recordId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && resource.data.markedBy == request.auth.uid || resource.data.studentId == request.auth.uid;
+      allow write: if request.auth != null && (resource.data.markedBy == request.auth.uid || resource.data.studentId == request.auth.uid);
     }
   }
 }
