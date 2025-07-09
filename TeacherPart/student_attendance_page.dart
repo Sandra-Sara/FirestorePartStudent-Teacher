@@ -1,314 +1,345 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:crypto/crypto.dart';
+import 'dart:convert';
+import 'login.dart';
 
 class StudentAttendancePage extends StatefulWidget {
   const StudentAttendancePage({super.key});
 
   @override
-  State<StudentAttendancePage> createState() => _StudentAttendancePageState();
+  _StudentAttendancePageState createState() => _StudentAttendancePageState();
 }
 
 class _StudentAttendancePageState extends State<StudentAttendancePage> {
-  List<Map<String, dynamic>> students = [];
+  String? _userRole;
+  String? _userId;
+  bool _isLoading = true;
+  String? _errorMessage;
+  List<Map<String, dynamic>> _students = [];
+  List<Map<String, dynamic>> _attendanceRecords = [];
+  final _courseIdController = TextEditingController();
+  DateTime _selectedDate = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _loadStudents();
+    _initializeUser();
   }
 
-  Future<void> _loadStudents() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final userId = user?.uid ?? user?.email ?? 'unknown';
+  @override
+  void dispose() {
+    _courseIdController.dispose();
+    super.dispose();
+  }
+
+  String _hashEmail(String email) {
+    final bytes = utf8.encode(email.toLowerCase());
+    final digest = sha256.convert(bytes);
+    return digest.toString();
+  }
+
+  Future<void> _initializeUser() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
     try {
-      // Load from Firestore
-      final snapshot = await FirebaseFirestore.instance
-          .collection('student_attendance')
-          .doc(userId)
-          .collection('CSE2201')
-          .get();
-      
-      if (snapshot.docs.isNotEmpty) {
-        setState(() {
-          students = snapshot.docs.map((doc) {
-            return {
-              'id': doc.id,
-              'name': doc.data()['name'] as String,
-              'attendance': doc.data()['attendance'] as int,
-            };
-          }).toList();
-        });
-      } else {
-        // Fallback to SharedPreferences or default data
-        final prefs = await SharedPreferences.getInstance();
-        final studentData = prefs.getStringList('students') ?? [];
-        setState(() {
-          students = studentData.map((data) {
-            final parts = data.split(':');
-            return {
-              'id': null,
-              'name': parts[0],
-              'attendance': int.parse(parts[1]),
-            };
-          }).toList();
-          if (students.isEmpty) {
-            students = [
-              {'id': null, 'name': 'Anisha Tabassum', 'attendance': 85},
-              {'id': null, 'name': 'Atiya Fahmida', 'attendance': 60},
-              {'id': null, 'name': 'Biplop Pal', 'attendance': 45},
-              {'id': null, 'name': 'Sara Faria', 'attendance': 92},
-            ];
-            _saveStudents();
-          }
-        });
-      }
-    } catch (e) {
-      print('Error loading students from Firestore: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error loading students: $e')),
-      );
-      // Fallback to SharedPreferences
       final prefs = await SharedPreferences.getInstance();
-      final studentData = prefs.getStringList('students') ?? [];
+      final token = prefs.getString('token');
+      final role = prefs.getString('user_role');
+
+      if (token == null || role == null) {
+        setState(() {
+          _errorMessage = 'Invalid session. Please log in again.';
+          _isLoading = false;
+        });
+        return;
+      }
+
       setState(() {
-        students = studentData.map((data) {
-          final parts = data.split(':');
+        _userRole = role;
+        _userId = token.replaceFirst('mock_token_', '');
+      });
+
+      if (_userRole == 'teacher') {
+        await _fetchStudents();
+      } else {
+        await _fetchStudentAttendance();
+      }
+
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error initializing: $e';
+        _isLoading = false;
+      });
+      if (kDebugMode) {
+        print('Initialization error: $e');
+      }
+    }
+  }
+
+  Future<void> _fetchStudents() async {
+    try {
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('users')
+          .where('role', isEqualTo: 'student')
+          .get();
+
+      setState(() {
+        _students = querySnapshot.docs.map((doc) {
+          final data = doc.data();
           return {
-            'id': null,
-            'name': parts[0],
-            'attendance': int.parse(parts[1]),
+            'userId': doc.id,
+            'name': data['name'] ?? 'Unknown',
+            'reg': data['reg'] ?? 'N/A',
+            'isPresent': false, // Default for attendance marking
           };
         }).toList();
-        if (students.isEmpty) {
-          students = [
-            {'id': null, 'name': 'Anisha Tabassum', 'attendance': 85},
-            {'id': null, 'name': 'Atiya Fahmida', 'attendance': 60},
-            {'id': null, 'name': 'Biplop Pal', 'attendance': 45},
-            {'id': null, 'name': 'Sara Faria', 'attendance': 92},
-          ];
-          _saveStudents();
-        }
       });
-    }
-  }
-
-  Future<void> _saveStudents() async {
-    final user = FirebaseAuth.instance.currentUser;
-    final userId = user?.uid ?? user?.email ?? 'unknown';
-    try {
-      // Save to Firestore
-      final batch = FirebaseFirestore.instance.batch();
-      for (var student in students) {
-        final docRef = FirebaseFirestore.instance
-            .collection('student_attendance')
-            .doc(userId)
-            .collection('CSE2201')
-            .doc(student['id'] ?? student['name'].replaceAll(' ', '_'));
-        batch.set(docRef, {
-          'name': student['name'],
-          'attendance': student['attendance'],
-        });
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error fetching students: $e';
+      });
+      if (kDebugMode) {
+        print('Fetch students error: $e');
       }
-      await batch.commit();
-
-      // Save to SharedPreferences as a local cache
-      final prefs = await SharedPreferences.getInstance();
-      final studentData = students.map((student) => '${student['name']}:${student['attendance']}').toList();
-      await prefs.setStringList('students', studentData);
-    } catch (e) {
-      print('Error saving students to Firestore: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving students: $e')),
-      );
     }
   }
 
-  Future<void> _logAttendanceUpdate(String studentName, int newAttendance) async {
-    final user = FirebaseAuth.instance.currentUser;
+  Future<void> _fetchStudentAttendance() async {
     try {
-      await FirebaseFirestore.instance.collection('attendance_logs').add({
-        'email': user?.email ?? 'unknown',
-        'student_name': studentName,
-        'new_attendance': newAttendance,
-        'timestamp': FieldValue.serverTimestamp(),
-        'course': 'CSE2201',
+      final querySnapshot = await FirebaseFirestore.instance
+          .collection('attendance')
+          .where('studentId', isEqualTo: _userId)
+          .orderBy('timestamp', descending: true)
+          .get();
+
+      setState(() {
+        _attendanceRecords = querySnapshot.docs.map((doc) {
+          final data = doc.data();
+          return {
+            'courseId': data['courseId'] ?? 'N/A',
+            'date': (data['date'] as Timestamp?)?.toDate().toString() ?? 'N/A',
+            'status': data['status'] ?? 'Unknown',
+            'markedBy': data['markedBy'] ?? 'Unknown',
+          };
+        }).toList();
       });
     } catch (e) {
-      print('Error logging attendance update: $e');
+      setState(() {
+        _errorMessage = 'Error fetching attendance: $e';
+      });
+      if (kDebugMode) {
+        print('Fetch attendance error: $e');
+      }
     }
   }
 
-  void updateAttendance(int index, bool increase) {
+  Future<void> _markAttendance(String studentId, String studentName, bool isPresent) async {
+    if (_courseIdController.text.trim().isEmpty) {
+      setState(() {
+        _errorMessage = 'Please enter a course ID';
+      });
+      return;
+    }
+
     setState(() {
-      final student = students[index];
-      final newAttendance = increase
-          ? (student['attendance'] + 5).clamp(0, 100)
-          : (student['attendance'] - 5).clamp(0, 100);
-      students[index]['attendance'] = newAttendance;
-      _saveStudents();
-      _logAttendanceUpdate(student['name'], newAttendance);
+      _isLoading = true;
+      _errorMessage = null;
     });
+
+    try {
+      await FirebaseFirestore.instance.collection('attendance').add({
+        'studentId': studentId,
+        'courseId': _courseIdController.text.trim(),
+        'date': Timestamp.fromDate(_selectedDate),
+        'status': isPresent ? 'present' : 'absent',
+        'markedBy': _userId,
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Attendance marked for $studentName')),
+      );
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Error marking attendance: $e';
+      });
+      if (kDebugMode) {
+        print('Mark attendance error: $e');
+      }
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
-  void addStudent(String name, int attendance) {
-    final user = FirebaseAuth.instance.currentUser;
-    setState(() {
-      students.add({'id': null, 'name': name, 'attendance': attendance});
-      _saveStudents();
-      _logAttendanceUpdate(name, attendance);
-    });
-  }
-
-  void showAddStudentDialog() {
-    String newName = '';
-    String attendanceText = '';
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Add New Student'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              decoration: const InputDecoration(labelText: 'Student Name'),
-              onChanged: (value) => newName = value,
-            ),
-            TextField(
-              decoration: const InputDecoration(labelText: 'Attendance (%)'),
-              keyboardType: TextInputType.number,
-              onChanged: (value) => attendanceText = value,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () {
-              if (newName.isNotEmpty && int.tryParse(attendanceText) != null) {
-                final attendance = int.parse(attendanceText).clamp(0, 100);
-                addStudent(newName, attendance);
-                Navigator.pop(context);
-              } else {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please enter a valid name and attendance')),
-                );
-              }
-            },
-            child: const Text('Add'),
-          ),
-        ],
-      ),
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => const LoginPage()),
     );
   }
 
-  Color getAttendanceColor(int percentage) {
-    if (percentage >= 75) return Colors.green;
-    if (percentage >= 50) return Colors.orange;
-    return Colors.red;
+  Future<void> _selectDate(BuildContext context) async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2025),
+      lastDate: DateTime(2026),
+    );
+    if (picked != null && picked != _selectedDate) {
+      setState(() {
+        _selectedDate = picked;
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [Colors.blue, Colors.deepPurple],
-          ),
-        ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: SingleChildScrollView(
-              child: Column(
-                children: [
-                  Image.asset(
-                    'assets/dulogo.png',
-                    height: 150,
-                    width: 300,
-                    fit: BoxFit.contain,
-                    errorBuilder: (context, error, stackTrace) => const Icon(Icons.error, size: 100, color: Colors.white70),
-                  ).animate().fadeIn(duration: 800.ms),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'University Of Dhaka',
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+      appBar: AppBar(
+        title: Text(_userRole == 'teacher' ? 'Mark Attendance' : 'My Attendance'),
+        backgroundColor: Colors.blue,
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator(color: Colors.blue))
+          : _errorMessage != null
+              ? Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(color: Colors.red, fontSize: 16),
+                    textAlign: TextAlign.center,
                   ),
-                  const SizedBox(height: 20),
-                  const Text(
-                    'Class Attendance - CSE 2201',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w500, color: Colors.white70),
-                  ),
-                  const SizedBox(height: 30),
-                  Card(
-                    elevation: 4,
+                )
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Card(
+                    elevation: 8,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: students.length,
-                        itemBuilder: (context, index) {
-                          final student = students[index];
-                          final name = student['name'] as String;
-                          final attendance = student['attendance'] as int;
-                          return ListTile(
-                            leading: Text('${index + 1}', style: const TextStyle(fontSize: 18)),
-                            title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _userRole == 'teacher' ? 'Mark Attendance' : 'My Attendance Records',
+                            style: const TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue,
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          if (_userRole == 'teacher') ...[
+                            TextFormField(
+                              controller: _courseIdController,
+                              decoration: const InputDecoration(
+                                labelText: 'Course ID (e.g., CSE 2201)',
+                                border: OutlineInputBorder(),
+                                prefixIcon: Icon(Icons.book),
+                              ),
+                              validator: (value) {
+                                if (value == null || value.trim().isEmpty) {
+                                  return 'Please enter a course ID';
+                                }
+                                return null;
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text('$attendance%', style: TextStyle(fontSize: 16, color: getAttendanceColor(attendance))),
-                                const SizedBox(width: 10),
-                                IconButton(icon: const Icon(Icons.remove), onPressed: () => updateAttendance(index, false)),
-                                IconButton(icon: const Icon(Icons.add), onPressed: () => updateAttendance(index, true)),
+                                Text(
+                                  'Date: ${_selectedDate.toString().substring(0, 10)}',
+                                  style: const TextStyle(fontSize: 16),
+                                ),
+                                ElevatedButton(
+                                  onPressed: () => _selectDate(context),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue,
+                                  ),
+                                  child: const Text(
+                                    'Select Date',
+                                    style: TextStyle(color: Colors.white),
+                                  ),
+                                ),
                               ],
                             ),
-                          );
-                        },
-                      ),
-                    ),
-                  ).animate().fadeIn(duration: 600.ms).slideY(begin: 0.5, end: 0),
-                  const SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: () => Navigator.pop(context),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.blue,
-                      minimumSize: const Size(200, 50),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      elevation: 5,
-                    ),
-                    child: const Text(
-                      'Back',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
+                            const SizedBox(height: 16),
+                            const Text(
+                              'Students:',
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 10),
+                            ..._students.map((student) {
+                              return ListTile(
+                                title: Text(student['name']),
+                                subtitle: Text('Reg: ${student['reg']}'),
+                                trailing: Switch(
+                                  value: student['isPresent'],
+                                  onChanged: (value) {
+                                    setState(() {
+                                      student['isPresent'] = value;
+                                    });
+                                    _markAttendance(student['userId'], student['name'], value);
+                                  },
+                                  activeColor: Colors.blue,
+                                ),
+                              );
+                            }),
+                          ] else ...[
+                            if (_attendanceRecords.isEmpty)
+                              const Text(
+                                'No attendance records found.',
+                                style: TextStyle(fontSize: 16),
+                              )
+                            else
+                              ..._attendanceRecords.map((record) {
+                                return ListTile(
+                                  title: Text('Course: ${record['courseId']}'),
+                                  subtitle: Text('Date: ${record['date']} | Status: ${record['status']}'),
+                                  trailing: Icon(
+                                    record['status'] == 'present' ? Icons.check_circle : Icons.cancel,
+                                    color: record['status'] == 'present' ? Colors.green : Colors.red,
+                                  ),
+                                );
+                              }),
+                          ],
+                          const SizedBox(height: 20),
+                          ElevatedButton(
+                            onPressed: _logout,
+                            style: ElevatedButton.styleFrom(
+                              minimumSize: const Size(double.infinity, 50),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              backgroundColor: Colors.blue,
+                            ),
+                            child: const Text(
+                              'Logout',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: showAddStudentDialog,
-        backgroundColor: Colors.blue,
-        child: const Icon(Icons.add),
-        tooltip: 'Add Student',
-      ).animate().fadeIn(duration: 800.ms),
+                ),
     );
   }
 }
