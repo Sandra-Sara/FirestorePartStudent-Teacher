@@ -6,6 +6,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
 import 'login.dart';
+import 'profile_page.dart';
 import 'student_attendance_page.dart';
 import 'student_cgpa_page.dart';
 import 'student_class_routine_page.dart';
@@ -125,7 +126,7 @@ class _StudentDashboardPageState extends State<StudentDashboardPage> {
           .get();
       final teacherId = routineSnapshot.docs.isNotEmpty
           ? routineSnapshot.docs.first.data()['teacherId']
-          : 'default_teacher_id'; // Replace with actual logic
+          : 'default_teacher_id';
 
       await FirebaseFirestore.instance.collection('drop_update_requests').add({
         'studentId': userId,
@@ -285,8 +286,9 @@ class _StudentDashboardPageState extends State<StudentDashboardPage> {
                                 OptionBox(
                                   option: 'Profile',
                                   onTap: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Profile Page not implemented')),
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const ProfilePage()),
                                     );
                                   },
                                 ),
