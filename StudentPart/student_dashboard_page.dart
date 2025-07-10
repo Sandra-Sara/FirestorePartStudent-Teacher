@@ -10,6 +10,10 @@ import 'profile_page.dart';
 import 'student_attendance_page.dart';
 import 'student_cgpa_page.dart';
 import 'student_class_routine_page.dart';
+import 'examschedule_page.dart';
+import 'leave_page.dart';
+import 'classwork_page.dart';
+import 'notification_page.dart';
 
 class StudentDashboardPage extends StatefulWidget {
   const StudentDashboardPage({super.key});
@@ -277,11 +281,12 @@ class _StudentDashboardPageState extends State<StudentDashboardPage> {
                             ).animate().fadeIn(duration: 600.ms).scaleXY(begin: 0.8, end: 1.0),
                             const SizedBox(height: 30),
                             GridView.count(
-                              crossAxisCount: 2,
+                              crossAxisCount: 3,
                               crossAxisSpacing: 16.0,
                               mainAxisSpacing: 16.0,
                               shrinkWrap: true,
                               physics: const NeverScrollableScrollPhysics(),
+                              childAspectRatio: 1.0,
                               children: [
                                 OptionBox(
                                   option: 'Profile',
@@ -322,24 +327,27 @@ class _StudentDashboardPageState extends State<StudentDashboardPage> {
                                 OptionBox(
                                   option: 'Exam Schedule',
                                   onTap: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Exam Schedule Page not implemented')),
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const ExamSchedulePage()),
                                     );
                                   },
                                 ),
                                 OptionBox(
                                   option: 'Leave',
                                   onTap: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Leave Page not implemented')),
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const LeavePage()),
                                     );
                                   },
                                 ),
                                 OptionBox(
-                                  option: 'Notification',
+                                  option: 'Classwork',
                                   onTap: () {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('Notification Page not implemented')),
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const ClassworkPage()),
                                     );
                                   },
                                 ),
@@ -425,6 +433,15 @@ class _StudentDashboardPageState extends State<StudentDashboardPage> {
                                     );
                                   },
                                 ),
+                                OptionBox(
+                                  option: 'Notification',
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(builder: (context) => const NotificationPage()),
+                                    );
+                                  },
+                                ),
                               ],
                             ).animate().fadeIn(duration: 600.ms).scaleXY(begin: 0.8, end: 1.0),
                           ],
@@ -494,8 +511,7 @@ class _OptionBoxState extends State<OptionBox> with SingleTickerProviderStateMix
       child: ScaleTransition(
         scale: _scaleAnimation,
         child: Container(
-          height: 150,
-          width: 150,
+          height: 100,
           decoration: BoxDecoration(
             color: _isTapped ? Colors.blue : Colors.white,
             borderRadius: BorderRadius.circular(12),
@@ -511,7 +527,7 @@ class _OptionBoxState extends State<OptionBox> with SingleTickerProviderStateMix
             child: Text(
               widget.option,
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 16,
                 fontWeight: FontWeight.bold,
                 color: _isTapped ? Colors.white : widget.textColor,
               ),
