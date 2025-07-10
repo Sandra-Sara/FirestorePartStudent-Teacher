@@ -1,1 +1,33 @@
-
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /attendance/{recordId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (resource.data.markedBy == request.auth.uid || resource.data.studentId == request.auth.uid);
+    }
+    match /grades/{recordId} {
+      allow read: if request.auth != null && resource.data.studentId == request.auth.uid;
+      allow write: if request.auth != null;
+    }
+    match /routines/{recordId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    match /drop_update_requests/{recordId} {
+      allow read: if request.auth != null && (resource.data.teacherId == request.auth.uid || resource.data.studentId == request.auth.uid);
+      allow write: if request.auth != null && (resource.data.studentId == request.auth.uid || resource.data.teacherId == request.auth.uid);
+    }
+    match /exam_schedules/{scheduleId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    match /leave_requests/{requestId} {
+      allow read: if request.auth != null && resource.data.studentId == request.auth.uid;
+      allow write: if request.auth != null && request.resource.data.studentId == request.auth.uid;
+    }
+  }
+}
